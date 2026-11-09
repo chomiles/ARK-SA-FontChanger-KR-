@@ -6,6 +6,20 @@ namespace ArkFontConverter;
 
 public partial class Form1 : Form
 {
+    private const string MainPatchBaseName = "ShooterGame-Windows_P";
+    private static readonly string[] MainPatchFiles =
+    {
+        $"{MainPatchBaseName}.pak",
+        $"{MainPatchBaseName}.utoc",
+        $"{MainPatchBaseName}.ucas"
+    };
+    private static readonly string[] NameplateFiles = { "MyMod_P.pak", "MyMod_P.utoc", "MyMod_P.ucas" };
+
+    // Empty IoStore companion pair verified with ASA UE 5.8. The game now skips a
+    // standalone legacy PAK, but it still loads the PAK when this valid pair exists.
+    private const string Ue58UtocBase64 = "LT09LS09PS0tPT0tLT09LQgAAACQAAAAAQAAAAEAAAAMAAAAAAAAACAAAAAAAAEAAAAAAAEAAADAKrXjhJI2aAAAAAAAAAAAAAAAAAAAAAAIAAAAAAAAAP//////////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwCq144SSNmgAAAAGAAAAAAAAAAAAQAAAAAAAQAAAQAAAAB31uDG/hwcpVQzIF4t1RRRjl0mNAAAAAA==";
+    private const string Ue58UcasBase64 = "bkNvSQUAAADAKrXjhJI2aAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8AAAAAAAAAAQAAAAAAAAAAAAAAA==";
+
     private readonly TextBox _installPath = new();
     private readonly ComboBox _language = new();
     private readonly TextBox _customFontFolder = new();
@@ -38,7 +52,7 @@ public partial class Form1 : Form
 
     private void BuildUi()
     {
-        Text = "ARK_SA_FontChanger";
+        Text = "ARK_SA_FontChanger - UE 5.8";
         Width = 1120;
         Height = 760;
         MinimumSize = new Size(1000, 680);
@@ -322,6 +336,7 @@ public partial class Form1 : Form
         {
             var paksDir = RequirePaksDir();
             if (paksDir is null) return;
+            EnsureArkIsClosed();
             if (!File.Exists(RepakPath)) throw new FileNotFoundException("repak.exe", RepakPath);
 
             var selected = _rows.Where(r => r.EnabledCheck.Checked).ToList();
@@ -335,7 +350,7 @@ public partial class Form1 : Form
                 }
 
             var work = NewTemp("ASAFontTool_Font_");
-            var originalPak = Path.Combine(paksDir, "ShooterGame-Windows_P.pak");
+            var originalPak = Path.Combine(paksDir, MainPatchFiles[0]);
             if (File.Exists(originalPak))
             {
                 if (MessageBox.Show(this, T("ExistingPatchConfirm"), T("Confirm"), MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
@@ -378,6 +393,8 @@ public partial class Form1 : Form
         {
             var paksDir = RequirePaksDir();
             if (paksDir is null) return;
+            EnsureArkIsClosed();
+            if (!File.Exists(RepakPath)) throw new FileNotFoundException("repak.exe", RepakPath);
             BackupCoreFiles(paksDir);
 
             DeleteIfExists(Path.Combine(paksDir, "zzz_ASAFontTool_FontOverride_P.pak"));
@@ -385,10 +402,16 @@ public partial class Form1 : Form
             DeleteIfExists(Path.Combine(paksDir, "_Mods", "~Mods", "zzz_ASAFontTool_KERISKEDU_AllSlots_P.pak"));
 
             var work = NewTemp("ASAFontTool_Default_");
+            var originalPak = Path.Combine(paksDir, MainPatchFiles[0]);
+            if (File.Exists(originalPak))
+            {
+                Log("UnpackOriginal", originalPak);
+                LogRaw(await RunProcessAsync(RepakPath, $"unpack \"{originalPak}\" --output \"{work}\" --force"));
+            }
             CopyToPakTree(work, "ShooterGame/Content/PrimalEarth/UI/Fonts/NotoSerifKR-Regular.ufont", Path.Combine(BundledFontsDir, "NotoSansCJKkr-Black.otf"));
             CopyToPakTree(work, "ShooterGame/Content/PrimalEarth/UI/Fonts/NotoSerifKR-Bold.ufont", Path.Combine(BundledFontsDir, "NotoSansCJKkr-Bold.otf"));
 
-            await PackAndReplaceAsync(work, Path.Combine(paksDir, "ShooterGame-Windows_P.pak"));
+            await PackAndReplaceAsync(work, originalPak);
             SetDefaultDropdowns();
             Log("DefaultsRestored");
             MessageBox.Show(this, T("DefaultsDone"), "Done", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -406,21 +429,26 @@ public partial class Form1 : Form
         {
             var paksDir = RequirePaksDir();
             if (paksDir is null) return;
-            var modsDir = Path.Combine(paksDir, "_Mods", "~Mods");
+            EnsureArkIsClosed();
+            var modsDir = Path.Combine(paksDir, "~Mods");
             Directory.CreateDirectory(modsDir);
-            var files = new[] { "MyMod_P.pak", "MyMod_P.utoc", "MyMod_P.ucas" };
-            var exists = files.Any(f => File.Exists(Path.Combine(modsDir, f)));
+            foreach (var file in NameplateFiles)
+                if (!File.Exists(Path.Combine(NameplateTemplateDir, file)))
+                    throw new FileNotFoundException(T("NameplateTemplateMissing"), Path.Combine(NameplateTemplateDir, file));
+
+            var exists = NameplateFiles.Any(f => File.Exists(Path.Combine(modsDir, f)));
             if (exists && MessageBox.Show(this, T("OverwriteNameplate"), T("Confirm"), MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
 
-            if (_backup.Checked)
-            {
-                var backupDir = Path.Combine(paksDir, "FontToolBackup");
-                Directory.CreateDirectory(backupDir);
-                foreach (var file in files) BackupIfExists(Path.Combine(modsDir, file), backupDir);
-            }
+            var legacyModsDir = Path.Combine(paksDir, "_Mods", "~Mods");
+            var nameplatePaths = NameplateFiles.Select(file => Path.Combine("~Mods", file))
+                .Concat(NameplateFiles.Select(file => Path.Combine("_Mods", "~Mods", file)));
+            BackupFileSet(paksDir, nameplatePaths);
 
-            foreach (var file in files)
+            foreach (var file in NameplateFiles)
+            {
                 File.Copy(Path.Combine(NameplateTemplateDir, file), Path.Combine(modsDir, file), overwrite: true);
+                DeleteIfExists(Path.Combine(legacyModsDir, file));
+            }
             Log("NameplateInstalled");
             MessageBox.Show(this, T("NameplateInstallDone"), "Done", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
@@ -437,15 +465,17 @@ public partial class Form1 : Form
         {
             var paksDir = RequirePaksDir();
             if (paksDir is null) return;
-            var modsDir = Path.Combine(paksDir, "_Mods", "~Mods");
-            var files = new[] { "MyMod_P.pak", "MyMod_P.utoc", "MyMod_P.ucas" };
-            if (_backup.Checked)
+            EnsureArkIsClosed();
+            var modsDir = Path.Combine(paksDir, "~Mods");
+            var legacyModsDir = Path.Combine(paksDir, "_Mods", "~Mods");
+            var nameplatePaths = NameplateFiles.Select(file => Path.Combine("~Mods", file))
+                .Concat(NameplateFiles.Select(file => Path.Combine("_Mods", "~Mods", file)));
+            BackupFileSet(paksDir, nameplatePaths);
+            foreach (var file in NameplateFiles)
             {
-                var backupDir = Path.Combine(paksDir, "FontToolBackup");
-                Directory.CreateDirectory(backupDir);
-                foreach (var file in files) BackupIfExists(Path.Combine(modsDir, file), backupDir);
+                DeleteIfExists(Path.Combine(modsDir, file));
+                DeleteIfExists(Path.Combine(legacyModsDir, file));
             }
-            foreach (var file in files) DeleteIfExists(Path.Combine(modsDir, file));
             Log("NameplateRemoved");
             MessageBox.Show(this, T("NameplateRemoveDone"), "Done", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
@@ -462,13 +492,36 @@ public partial class Form1 : Form
         {
             var paksDir = RequirePaksDir();
             if (paksDir is null) return;
+            EnsureArkIsClosed();
             var backupDir = Path.Combine(paksDir, "FontToolBackup");
-            var latest = Directory.Exists(backupDir)
-                ? Directory.EnumerateFiles(backupDir, "ShooterGame-Windows_P.pak.*.bak").OrderByDescending(File.GetLastWriteTime).FirstOrDefault()
+            var latestSet = Directory.Exists(backupDir)
+                ? Directory.EnumerateDirectories(backupDir)
+                    .OrderByDescending(dir => Path.GetFileName(dir))
+                    .FirstOrDefault(dir => File.Exists(Path.Combine(dir, MainPatchFiles[0])))
                 : null;
-            if (latest is null) { MessageBox.Show(this, T("NoBackup")); return; }
-            File.Copy(latest, Path.Combine(paksDir, "ShooterGame-Windows_P.pak"), overwrite: true);
-            Log("OriginalRestored", latest);
+
+            if (latestSet is not null)
+            {
+                BackupCoreFiles(paksDir);
+                foreach (var file in MainPatchFiles)
+                {
+                    var source = Path.Combine(latestSet, file);
+                    if (File.Exists(source)) File.Copy(source, Path.Combine(paksDir, file), overwrite: true);
+                }
+                EnsureUe58Companions(paksDir);
+                Log("OriginalRestored", latestSet);
+            }
+            else
+            {
+                var legacyBackup = Directory.Exists(backupDir)
+                    ? Directory.EnumerateFiles(backupDir, $"{MainPatchFiles[0]}.*.bak").OrderByDescending(File.GetLastWriteTime).FirstOrDefault()
+                    : null;
+                if (legacyBackup is null) { MessageBox.Show(this, T("NoBackup")); return; }
+                BackupCoreFiles(paksDir);
+                File.Copy(legacyBackup, Path.Combine(paksDir, MainPatchFiles[0]), overwrite: true);
+                EnsureUe58Companions(paksDir);
+                Log("OriginalRestored", legacyBackup);
+            }
             MessageBox.Show(this, T("RestoreDone"), "Done", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
@@ -487,20 +540,76 @@ public partial class Form1 : Form
 
     private void BackupCoreFiles(string paksDir)
     {
+        BackupFileSet(paksDir, MainPatchFiles);
+    }
+
+    private void BackupFileSet(string paksDir, IEnumerable<string> relativeFiles)
+    {
         if (!_backup.Checked) return;
-        var backupDir = Path.Combine(paksDir, "FontToolBackup");
-        Directory.CreateDirectory(backupDir);
-        BackupIfExists(Path.Combine(paksDir, "ShooterGame-Windows_P.pak"), backupDir);
-        BackupIfExists(Path.Combine(paksDir, "zzz_ASAFontTool_FontOverride_P.pak"), backupDir);
+        var existing = relativeFiles.Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(relative => File.Exists(Path.Combine(paksDir, relative)))
+            .ToList();
+        if (existing.Count == 0) return;
+
+        var snapshotDir = Path.Combine(paksDir, "FontToolBackup", DateTime.Now.ToString("yyyyMMdd_HHmmss_fff"));
+        foreach (var relative in existing)
+        {
+            var source = Path.Combine(paksDir, relative);
+            var destination = Path.Combine(snapshotDir, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            File.Copy(source, destination, overwrite: false);
+        }
+        Log("BackupCreated", snapshotDir);
     }
 
     private async Task PackAndReplaceAsync(string work, string targetPak)
     {
-        var tempPak = Path.Combine(Path.GetTempPath(), "ASAFontTool_Repacked_" + DateTime.Now.ToString("yyyyMMdd_HHmmss_fff") + ".pak");
+        var targetDir = Path.GetDirectoryName(targetPak)!;
+        var tempPak = Path.Combine(targetDir, $".{Path.GetFileName(targetPak)}.{DateTime.Now:yyyyMMdd_HHmmss_fff}.tmp");
         Log("Packing", tempPak);
-        LogRaw(await RunProcessAsync(RepakPath, $"pack \"{work}\" \"{tempPak}\" --version V8B --mount-point ../../../"));
-        File.Copy(tempPak, targetPak, overwrite: true);
-        Log("Replaced", targetPak);
+        try
+        {
+            LogRaw(await RunProcessAsync(RepakPath, $"pack \"{work}\" \"{tempPak}\" --version V8B --mount-point ../../../"));
+            if (!File.Exists(tempPak) || new FileInfo(tempPak).Length == 0)
+                throw new InvalidDataException(T("PakBuildFailed"));
+            File.Copy(tempPak, targetPak, overwrite: true);
+            EnsureUe58Companions(targetDir);
+            Log("Replaced", targetPak);
+            Log("Ue58CompanionsReady");
+        }
+        finally
+        {
+            DeleteIfExists(tempPak);
+        }
+    }
+
+    private void EnsureUe58Companions(string paksDir)
+    {
+        var utoc = Path.Combine(paksDir, MainPatchFiles[1]);
+        var ucas = Path.Combine(paksDir, MainPatchFiles[2]);
+        if (HasMagic(utoc, Encoding.ASCII.GetBytes("-==--==--==--==-")) &&
+            HasMagic(ucas, Encoding.ASCII.GetBytes("nCoI"))) return;
+
+        File.WriteAllBytes(utoc, Convert.FromBase64String(Ue58UtocBase64));
+        File.WriteAllBytes(ucas, Convert.FromBase64String(Ue58UcasBase64));
+        if (!HasMagic(utoc, Encoding.ASCII.GetBytes("-==--==--==--==-")) ||
+            !HasMagic(ucas, Encoding.ASCII.GetBytes("nCoI")))
+            throw new InvalidDataException(T("CompanionBuildFailed"));
+    }
+
+    private static bool HasMagic(string path, byte[] magic)
+    {
+        if (!File.Exists(path)) return false;
+        using var stream = File.OpenRead(path);
+        if (stream.Length < magic.Length) return false;
+        var buffer = new byte[magic.Length];
+        return stream.Read(buffer, 0, buffer.Length) == buffer.Length && buffer.SequenceEqual(magic);
+    }
+
+    private void EnsureArkIsClosed()
+    {
+        if (Process.GetProcessesByName("ArkAscended").Length > 0)
+            throw new InvalidOperationException(T("CloseGameFirst"));
     }
 
     private void SetDefaultDropdowns()
@@ -551,16 +660,6 @@ public partial class Form1 : Form
         return Directory.Exists(nested) ? nested : null;
     }
 
-    private static void BackupIfExists(string path, string backupDir)
-    {
-        if (!File.Exists(path)) return;
-        var baseDest = Path.Combine(backupDir, $"{Path.GetFileName(path)}.{DateTime.Now:yyyyMMdd_HHmmss_fff}.bak");
-        var dest = baseDest;
-        var index = 1;
-        while (File.Exists(dest)) dest = baseDest + "." + index++;
-        File.Copy(path, dest, overwrite: false);
-    }
-
     private static void DeleteIfExists(string path)
     {
         if (File.Exists(path)) File.Delete(path);
@@ -583,7 +682,10 @@ public partial class Form1 : Form
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
         await process.WaitForExitAsync();
-        return (await stdout) + (await stderr);
+        var output = (await stdout) + (await stderr);
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException($"{Path.GetFileName(fileName)} exited with code {process.ExitCode}.{Environment.NewLine}{output}".Trim());
+        return output;
     }
 
     private void Log(string key, params string[] args) => LogRaw(string.Format(T(key), args));
@@ -623,7 +725,7 @@ public partial class Form1 : Form
         [("ko", "BrowseGame")] = "설치 경로 선택",
         [("ko", "BrowseFonts")] = "커스텀 폰트 폴더 선택",
         [("ko", "RefreshFonts")] = "커스텀폰트 새로불러오기",
-        [("ko", "Backup")] = "원본/기존 PAK 백업",
+        [("ko", "Backup")] = "패치 3파일 세트 백업",
         [("ko", "OpenOutput")] = "완료 후 폴더 열기",
         [("ko", "RestoreOriginal")] = "원본복원 (기본값 복원이 작동하지 않는 경우 사용)",
         [("ko", "ResetDefault")] = "기본값 복원",
@@ -637,7 +739,7 @@ public partial class Form1 : Form
         [("ko", "Part1Label")] = "파트 1 - 대부분의 UI텍스트와 채팅창",
         [("ko", "Part2Label")] = "파트 2 - 하단생물이름 / 부족로그 / 핫바 하단 폰트",
         [("ko", "TipLabel")] = "TIP1: 모국어와 영어, 숫자가 포함된 폰트를 추천합니다. (동북아시아권의 경우 한자 포함권장)",
-        [("ko", "Tip2Label")] = "TIP2: 유저번역패치 (ShooterGame-Windows_P.pak)가 있는경우 해당 파일에 적용합니다. 유저 번역 패치가 없는경우 새로 생성하며 클라이언트 파일은 수정하지 않습니다.",
+        [("ko", "Tip2Label")] = "TIP2: 기존 번역 PAK는 내용을 유지하며 폰트만 바꿉니다. UE 5.8용 UTOC/UCAS가 없거나 잘못된 경우 자동 생성합니다.",
         [("ko", "Tip3Label")] = "TIP3: 한국어버전에서만 테스트를 완료하였으며 다른 언어에서 정상작동을 보장하지 않습니다.",
         [("ko", "FooterLabel")] = "- Youtube CHZZK 조마일즈 / mileschokr@gmail.com -",
         [("ko", "BuildPak")] = "폰트 적용하기",
@@ -646,9 +748,9 @@ public partial class Form1 : Form
         [("ko", "CreateNewPatchPak")] = "기존 ShooterGame-Windows_P.pak가 없어 새 폰트 패치를 만듭니다: {0}",
         [("ko", "Packing")] = "PAK을 생성 중입니다: {0}",
         [("ko", "Replaced")] = "교체 완료: {0}",
-        [("ko", "PakDone")] = "PAK 생성 및 교체가 완료되었습니다.",
+        [("ko", "PakDone")] = "UE 5.8용 PAK/UTOC/UCAS 생성 및 교체가 완료되었습니다.",
         [("ko", "DefaultsRestored")] = "기본값을 복원했습니다.",
-        [("ko", "DefaultsDone")] = "기본값 복원이 완료되었습니다.",
+        [("ko", "DefaultsDone")] = "번역 내용을 유지한 채 기본 폰트 복원이 완료되었습니다.",
         [("ko", "NameplateInstalled")] = "이름표시 가독성 개선 모드를 설치했습니다.",
         [("ko", "NameplateRemoved")] = "이름표시 모드를 제거했습니다.",
         [("ko", "NameplateInstallDone")] = "이름표시 가독성 개선 설치가 완료되었습니다.",
@@ -662,11 +764,17 @@ public partial class Form1 : Form
         [("ko", "NoBackup")] = "복원할 백업을 찾을 수 없습니다.",
         [("ko", "OriginalRestored")] = "원본을 복원했습니다: {0}",
         [("ko", "RestoreDone")] = "원본 복원이 완료되었습니다.",
+        [("ko", "BackupCreated")] = "3파일 백업을 만들었습니다: {0}",
+        [("ko", "Ue58CompanionsReady")] = "UE 5.8용 UTOC/UCAS를 확인했습니다.",
+        [("ko", "PakBuildFailed")] = "생성된 PAK가 없거나 비어 있습니다.",
+        [("ko", "CompanionBuildFailed")] = "UE 5.8용 UTOC/UCAS 생성 검증에 실패했습니다.",
+        [("ko", "CloseGameFirst")] = "ARK가 실행 중입니다. 게임을 완전히 종료한 뒤 다시 시도하세요.",
+        [("ko", "NameplateTemplateMissing")] = "이름표 모드 템플릿 파일이 없습니다.",
 
         [("en", "BrowseGame")] = "Select install path",
         [("en", "BrowseFonts")] = "Select custom font folder",
         [("en", "RefreshFonts")] = "Reload custom fonts",
-        [("en", "Backup")] = "Back up original/existing PAK",
+        [("en", "Backup")] = "Back up the three-file patch set",
         [("en", "OpenOutput")] = "Open folder when done",
         [("en", "RestoreOriginal")] = "Restore original (use if defaults fail)",
         [("en", "ResetDefault")] = "Restore defaults",
@@ -680,7 +788,7 @@ public partial class Form1 : Form
         [("en", "Part1Label")] = "Part 1 - Most UI text and chat window",
         [("en", "Part2Label")] = "Part 2 - Bottom creature name / tribe log / hotbar lower font",
         [("en", "TipLabel")] = "TIP1: Use a font that includes your native language, English, and numbers. East Asian users should prefer fonts with Chinese characters.",
-        [("en", "Tip2Label")] = "TIP2: If a user translation patch (ShooterGame-Windows_P.pak) exists, changes are applied to that file. If it does not exist, a new patch is created and client files are not modified.",
+        [("en", "Tip2Label")] = "TIP2: Existing translations are preserved while fonts are changed. Missing or invalid UE 5.8 UTOC/UCAS companions are generated automatically.",
         [("en", "Tip3Label")] = "TIP3: Testing has only been completed on the Korean version; normal operation in other languages is not guaranteed.",
         [("en", "FooterLabel")] = "- Youtube CHZZK Jomiles / mileschokr@gmail.com -",
         [("en", "BuildPak")] = "Apply font",
@@ -689,9 +797,9 @@ public partial class Form1 : Form
         [("en", "CreateNewPatchPak")] = "ShooterGame-Windows_P.pak was not found. Creating a new font patch: {0}",
         [("en", "Packing")] = "Building PAK: {0}",
         [("en", "Replaced")] = "Replaced: {0}",
-        [("en", "PakDone")] = "PAK build and replacement completed.",
+        [("en", "PakDone")] = "UE 5.8 PAK/UTOC/UCAS build and replacement completed.",
         [("en", "DefaultsRestored")] = "Defaults restored.",
-        [("en", "DefaultsDone")] = "Default restoration completed.",
+        [("en", "DefaultsDone")] = "Default fonts restored without removing translations.",
         [("en", "NameplateInstalled")] = "Installed nameplate readability mod.",
         [("en", "NameplateRemoved")] = "Removed nameplate mod.",
         [("en", "NameplateInstallDone")] = "Nameplate readability install completed.",
@@ -705,11 +813,17 @@ public partial class Form1 : Form
         [("en", "NoBackup")] = "No backup was found.",
         [("en", "OriginalRestored")] = "Restored original: {0}",
         [("en", "RestoreDone")] = "Original restoration completed.",
+        [("en", "BackupCreated")] = "Created a three-file backup: {0}",
+        [("en", "Ue58CompanionsReady")] = "Verified the UE 5.8 UTOC/UCAS companions.",
+        [("en", "PakBuildFailed")] = "The generated PAK is missing or empty.",
+        [("en", "CompanionBuildFailed")] = "UE 5.8 UTOC/UCAS verification failed.",
+        [("en", "CloseGameFirst")] = "ARK is running. Close the game completely and try again.",
+        [("en", "NameplateTemplateMissing")] = "A nameplate mod template file is missing.",
 
         [("ja", "BrowseGame")] = "インストール先を選択",
         [("ja", "BrowseFonts")] = "カスタムフォントフォルダ選択",
         [("ja", "RefreshFonts")] = "カスタムフォント再読込",
-        [("ja", "Backup")] = "元/既存PAKをバックアップ",
+        [("ja", "Backup")] = "3ファイルのパッチセットをバックアップ",
         [("ja", "OpenOutput")] = "完了後フォルダを開く",
         [("ja", "RestoreOriginal")] = "元に戻す（既定値復元が動作しない場合）",
         [("ja", "ResetDefault")] = "既定値に戻す",
@@ -723,7 +837,7 @@ public partial class Form1 : Form
         [("ja", "Part1Label")] = "パート1 - 大半のUIテキストとチャット欄",
         [("ja", "Part2Label")] = "パート2 - 下部の生物名 / トライブログ / ホットバー下部フォント",
         [("ja", "TipLabel")] = "TIP1: 母国語、英語、数字を含むフォントをおすすめします。（東アジア圏では中国語を含むものを推奨）",
-        [("ja", "Tip2Label")] = "TIP2: ユーザー翻訳パッチ（ShooterGame-Windows_P.pak）がある場合は、そのファイルに適用します。ない場合は新しく作成し、クライアントファイルは変更しません。",
+        [("ja", "Tip2Label")] = "TIP2: 既存の翻訳を保持したままフォントのみ変更します。UE 5.8用UTOC/UCASがない、または無効な場合は自動生成します。",
         [("ja", "Tip3Label")] = "TIP3: テストは韓国語版でのみ完了しており、他の言語での正常動作は保証しません。",
         [("ja", "FooterLabel")] = "- Youtube CHZZK ジョマイルズ / mileschokr@gmail.com -",
         [("ja", "BuildPak")] = "フォントを適用",
@@ -732,9 +846,9 @@ public partial class Form1 : Form
         [("ja", "CreateNewPatchPak")] = "ShooterGame-Windows_P.pakがないため、新しいフォントパッチを作成します: {0}",
         [("ja", "Packing")] = "PAK作成中: {0}",
         [("ja", "Replaced")] = "置換完了: {0}",
-        [("ja", "PakDone")] = "PAK作成と置換が完了しました。",
+        [("ja", "PakDone")] = "UE 5.8用PAK/UTOC/UCASの作成と置換が完了しました。",
         [("ja", "DefaultsRestored")] = "既定値を復元しました。",
-        [("ja", "DefaultsDone")] = "既定値への復元が完了しました。",
+        [("ja", "DefaultsDone")] = "翻訳を保持したまま既定フォントへ復元しました。",
         [("ja", "NameplateInstalled")] = "名前表示の可読性改善Modをインストールしました。",
         [("ja", "NameplateRemoved")] = "名前表示Modを削除しました。",
         [("ja", "NameplateInstallDone")] = "名前表示の可読性改善が完了しました。",
@@ -748,6 +862,12 @@ public partial class Form1 : Form
         [("ja", "NoBackup")] = "復元用バックアップが見つかりません。",
         [("ja", "OriginalRestored")] = "元に戻しました: {0}",
         [("ja", "RestoreDone")] = "元への復元が完了しました。",
+        [("ja", "BackupCreated")] = "3ファイルのバックアップを作成しました: {0}",
+        [("ja", "Ue58CompanionsReady")] = "UE 5.8用UTOC/UCASを確認しました。",
+        [("ja", "PakBuildFailed")] = "生成されたPAKがないか、空です。",
+        [("ja", "CompanionBuildFailed")] = "UE 5.8用UTOC/UCASの検証に失敗しました。",
+        [("ja", "CloseGameFirst")] = "ARKが実行中です。ゲームを完全に終了してから再試行してください。",
+        [("ja", "NameplateTemplateMissing")] = "名前表示Modのテンプレートファイルがありません。",
     };
 
     private sealed class AppSettings
