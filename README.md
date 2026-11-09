@@ -31,7 +31,7 @@ ARK: Survival Ascended를 한국어로 플레이할 때 일부 UI, 채팅창, �
 1. `ARK_SA_FontChanger.exe`를 실행합니다.
 2. ARK: Survival Ascended 설치 경로를 선택합니다.
    - 예: `...\SteamLibrary\steamapps\common\ARK Survival Ascended`
-3. `FontHere` 폴더에 사용할 `.ttf` 또는 `.otf` 폰트를 넣습니다.
+3. 실행 후 생성되는 `UserFonts` 폴더에 사용할 `.ttf` 또는 `.otf` 폰트를 넣습니다. `FontHere`는 도구에 포함된 기본 폰트 폴더입니다.
 4. 프로그램에서 `커스텀폰트 새로불러오기`를 누릅니다.
 5. Part 1, Part 2에 적용할 폰트를 선택합니다.
 6. 필요하면 `패치 3파일 세트 백업`을 체크합니다.
@@ -43,11 +43,13 @@ ARK: Survival Ascended를 한국어로 플레이할 때 일부 UI, 채팅창, �
 ARK_SA_FontChanger.exe
 DATA
 FontHere
+UserFonts
 ```
 
 - `ARK_SA_FontChanger.exe`: 실행 파일
 - `DATA`: 패킹 도구와 이름표시 개선용 데이터
-- `FontHere`: 사용자가 적용할 폰트를 넣는 폴더
+- `FontHere`: 도구에 포함된 기본 폰트
+- `UserFonts`: 사용자가 적용할 폰트를 넣는 폴더
 
 ## 적용 파트
 
@@ -95,7 +97,7 @@ The tool applies selected fonts to `ShooterGame-Windows_P.pak`. If that file doe
 1. Run `ARK_SA_FontChanger.exe`.
 2. Select your ARK: Survival Ascended install path.
    - Example: `...\SteamLibrary\steamapps\common\ARK Survival Ascended`
-3. Put your `.ttf` or `.otf` font files into the `FontHere` folder.
+3. Put custom `.ttf` or `.otf` files in the `UserFonts` folder created after the first launch. `FontHere` contains the bundled defaults.
 4. Click `Reload custom fonts`.
 5. Select fonts for Part 1 and Part 2.
 6. Enable the three-file patch backup if needed.
@@ -107,11 +109,13 @@ The tool applies selected fonts to `ShooterGame-Windows_P.pak`. If that file doe
 ARK_SA_FontChanger.exe
 DATA
 FontHere
+UserFonts
 ```
 
 - `ARK_SA_FontChanger.exe`: application executable
 - `DATA`: packing tool and nameplate readability data
-- `FontHere`: folder for user font files
+- `FontHere`: bundled default fonts
+- `UserFonts`: folder for user-provided fonts
 
 ## Font Targets
 
